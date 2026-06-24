@@ -1,0 +1,17 @@
+{
+  "releases": [
+    {
+      "name": "Active Loadouts",
+      "version": "1.0.0",
+      "filename": "ActiveLoadouts-1.0.0.zip",
+      "download_url": "https://github.com/DaJp1337/ActiveLoadouts/releases/download/1.0.0/ActiveLoadouts-1.0.0.zip",
+      "nolib": false,
+      "metadata": [
+        {
+          "flavor": "mainline",
+          "interface": 120007
+        }
+      ]
+    }
+  ]
+}
