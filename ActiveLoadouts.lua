@@ -12,13 +12,15 @@ if GetLocale() == "deDE" then
   L.CustomUnsaved = "Ungespeichert"
   L.NoArmor = "Keine Rüstungssets gefunden."
   L.NoTalents = "Keine gespeicherten Talente gefunden."
-  L.CombatError = "Wechseln im Kampf nicht möglich."
+  L.CombatMenuError = "Aktion verweigert: Du befindest dich im Kampf."
+  L.MythicPlusMenuError = "Aktion verweigert: Ausrüstung/Talente sind in Mythisch+ gesperrt."
   L.OptionsTitle = "Active Loadouts Optionen"
   L.LockFrames = "Fensterpositionen sperren"
   L.HideArmor = "Rüstungs-Indikator ausblenden"
   L.HideTalents = "Talent-Indikator ausblenden"
   L.LinkFrames = "Fenster zusammenheften (Snapping)"
   L.Scale = "Skalierung (Größe)"
+  L.ResetScale = "Skalierung zurücksetzen"
   L.ResetPos = "Positionen zurücksetzen"
   L.ResetMsg = "Positionen auf Standard zurückgesetzt."
   L.SlashHelp = "Befehle: /al (öffnet das Menü), show, hide, lock, unlock, reset."
@@ -29,13 +31,15 @@ else
   L.CustomUnsaved = "Custom / Unsaved"
   L.NoArmor = "No Equipment Manager sets found."
   L.NoTalents = "No saved talent loadouts found."
-  L.CombatError = "Cannot change loadouts in combat."
+  L.CombatMenuError = "Action denied: You are in combat."
+  L.MythicPlusMenuError = "Action denied: Loadouts are locked during an active Mythic+."
   L.OptionsTitle = "Active Loadouts Options"
   L.LockFrames = "Lock Frame Positions"
   L.HideArmor = "Hide Armor Indicator"
   L.HideTalents = "Hide Talent Indicator"
   L.LinkFrames = "Snap/Link Frames Together"
   L.Scale = "Scale (Size)"
+  L.ResetScale = "Reset Scale"
   L.ResetPos = "Reset Positions"
   L.ResetMsg = "Positions reset to default."
   L.SlashHelp = "Commands: /al (opens menu), show, hide, lock, unlock, reset."
@@ -43,6 +47,15 @@ end
 
 local function Print(msg)
   print("|cff33ff99Active Loadouts|r: " .. msg)
+end
+
+-----------------------------------------------------------
+-- Combat & Mythic+ Restriction Check
+-----------------------------------------------------------
+local function IsRestricted()
+  if InCombatLockdown() then return true, L.CombatMenuError end
+  if C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive() then return true, L.MythicPlusMenuError end
+  return false, nil
 end
 
 -----------------------------------------------------------
@@ -83,35 +96,60 @@ local armorFrame = CreateIndicator("ArmorFrame")
 local talentFrame = CreateIndicator("TalentFrame")
 
 -----------------------------------------------------------
--- Layout & Dragging Logic
+-- Flawless Anchor & Scaling Math
 -----------------------------------------------------------
-local function ApplyLayout()
-  if ActiveLoadoutsDB.armorHidden then armorFrame:Hide() else armorFrame:Show() end
-  if ActiveLoadoutsDB.talentHidden then talentFrame:Hide() else talentFrame:Show() end
+local function RestorePosition(frame, dbKey, defX, defY)
+  local s = frame:GetScale()
+  local data = ActiveLoadoutsDB[dbKey]
+  frame:ClearAllPoints()
   
-  armorFrame:SetScale(ActiveLoadoutsDB.scale or 1.0)
-  talentFrame:SetScale(ActiveLoadoutsDB.scale or 1.0)
-  
-  if ActiveLoadoutsDB.linked then
-    talentFrame:ClearAllPoints()
-    talentFrame:SetPoint("TOPLEFT", armorFrame, "BOTTOMLEFT", 0, -2)
+  if data and #data == 2 then
+    -- Perfect absolute positioning based on Bottom-Left
+    frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", data[1] / s, data[2] / s)
+  elseif data and #data == 4 then
+    -- Silently migrates old user setups to the new absolute coordinate format
+    local oldLeft, oldTop = data[3], data[4]
+    local oldScale = ActiveLoadoutsDB.scale or 1.0
+    local absLeft = oldLeft * oldScale
+    local absBottom = (oldTop - frame:GetHeight()) * oldScale
+    ActiveLoadoutsDB[dbKey] = { absLeft, absBottom }
+    frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", absLeft / s, absBottom / s)
   else
-    if ActiveLoadoutsDB.talentPoint then
-      local p, rp, x, y = unpack(ActiveLoadoutsDB.talentPoint)
-      talentFrame:ClearAllPoints()
-      talentFrame:SetPoint(p, UIParent, rp, x, y)
-    end
+    -- Default positioning
+    frame:SetPoint("BOTTOMLEFT", UIParent, "CENTER", defX / s, defY / s)
   end
 end
 
 local function SavePosition(frame, dbKey)
-  local left, top = frame:GetLeft(), frame:GetTop()
-  frame:ClearAllPoints()
-  frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
-  ActiveLoadoutsDB[dbKey] = {"TOPLEFT", "BOTTOMLEFT", left, top}
+  local s = frame:GetScale()
+  local left, bottom = frame:GetLeft(), frame:GetBottom()
+  if left and bottom then
+    ActiveLoadoutsDB[dbKey] = { left * s, bottom * s }
+  end
 end
 
--- Armor Drag
+local function ApplyLayout()
+  if ActiveLoadoutsDB.armorHidden then armorFrame:Hide() else armorFrame:Show() end
+  if ActiveLoadoutsDB.talentHidden then talentFrame:Hide() else talentFrame:Show() end
+  
+  local s = ActiveLoadoutsDB.scale or 1.0
+  armorFrame:SetScale(s)
+  talentFrame:SetScale(s)
+  
+  RestorePosition(armorFrame, "armorPoint", -85, -208)
+  
+  if ActiveLoadoutsDB.linked then
+    talentFrame:ClearAllPoints()
+    -- Keeps the 2-pixel gap perfectly crisp regardless of how big the scale is
+    talentFrame:SetPoint("TOPLEFT", armorFrame, "BOTTOMLEFT", 0, -2 / s)
+  else
+    RestorePosition(talentFrame, "talentPoint", -85, -248)
+  end
+end
+
+-----------------------------------------------------------
+-- Drag Handlers
+-----------------------------------------------------------
 armorFrame:SetScript("OnDragStart", function(self)
   if ActiveLoadoutsDB.locked then return end
   if not InCombatLockdown() then self:StartMoving() end
@@ -119,10 +157,9 @@ end)
 armorFrame:SetScript("OnDragStop", function(self)
   self:StopMovingOrSizing()
   SavePosition(self, "armorPoint")
-  if ActiveLoadoutsDB.linked then ApplyLayout() end -- Keeps talent frame glued
+  if ActiveLoadoutsDB.linked then ApplyLayout() end
 end)
 
--- Talent Drag
 talentFrame:SetScript("OnDragStart", function(self)
   if ActiveLoadoutsDB.locked or ActiveLoadoutsDB.linked then return end
   if not InCombatLockdown() then self:StartMoving() end
@@ -167,7 +204,9 @@ local function UpdateArmorVisual()
 end
 
 local function OnArmorSelected(id)
-  if InCombatLockdown() then Print(L.CombatError) return end
+  local isRestricted, errorMsg = IsRestricted()
+  if isRestricted then Print(errorMsg) return end
+  
   if C_EquipmentSet and C_EquipmentSet.UseEquipmentSet then C_EquipmentSet.UseEquipmentSet(id)
   elseif UseEquipmentSet then UseEquipmentSet(id) end
 end
@@ -181,6 +220,8 @@ end
 
 armorFrame:SetScript("OnClick", function(_, btn)
   if btn == "RightButton" then
+    local isRestricted, errorMsg = IsRestricted()
+    if isRestricted then Print(errorMsg) return end 
     if #cachedSetIDs == 0 then Print(L.NoArmor) return end
     MenuUtil.CreateContextMenu(armorFrame, ArmorMenuGen)
   end
@@ -221,7 +262,9 @@ local function UpdateTalentVisual()
 end
 
 local function OnTalentSelected(id)
-  if InCombatLockdown() then Print(L.CombatError) return end
+  local isRestricted, errorMsg = IsRestricted()
+  if isRestricted then Print(errorMsg) return end
+  
   local specID = PlayerUtil.GetCurrentSpecID()
   if specID then C_ClassTalents.UpdateLastSelectedSavedConfigID(specID, id) end
   C_ClassTalents.LoadConfig(id, true)
@@ -236,6 +279,8 @@ end
 
 talentFrame:SetScript("OnClick", function(_, btn)
   if btn == "RightButton" then
+    local isRestricted, errorMsg = IsRestricted()
+    if isRestricted then Print(errorMsg) return end 
     if #cachedTalentIDs == 0 then Print(L.NoTalents) return end
     MenuUtil.CreateContextMenu(talentFrame, TalentMenuGen)
   end
@@ -256,13 +301,6 @@ core:SetScript("OnEvent", function(_, event)
   if event == "PLAYER_LOGIN" then
     ActiveLoadoutsDB = ActiveLoadoutsDB or {}
     if ActiveLoadoutsDB.linked == nil then ActiveLoadoutsDB.linked = true end
-    
-    if ActiveLoadoutsDB.armorPoint then
-      local p, rp, x, y = unpack(ActiveLoadoutsDB.armorPoint)
-      armorFrame:ClearAllPoints(); armorFrame:SetPoint(p, UIParent, rp, x, y)
-    else
-      armorFrame:SetPoint("TOPLEFT", UIParent, "CENTER", -85, -180)
-    end
     
     UpdateArmorIDs()
     UpdateTalentIDs()
@@ -307,20 +345,47 @@ local hideArmorCheck = MakeCheck("HideArmor", L.HideArmor, lockCheck, "armorHidd
 local hideTalentCheck = MakeCheck("HideTalents", L.HideTalents, hideArmorCheck, "talentHidden", ApplyLayout)
 local linkCheck = MakeCheck("Link", L.LinkFrames, hideTalentCheck, "linked", ApplyLayout)
 
+-- Slider
 local scaleSlider = CreateFrame("Slider", "ActiveLoadoutsScaleSlider", panel, "OptionsSliderTemplate")
 scaleSlider:SetPoint("TOPLEFT", linkCheck, "BOTTOMLEFT", 4, -30)
-scaleSlider:SetMinMaxValues(0.5, 2.0)
-scaleSlider:SetValueStep(0.1)
+scaleSlider:SetMinMaxValues(0.5, 2.5)
+scaleSlider:SetValueStep(0.05)
 _G[scaleSlider:GetName() .. "Low"]:SetText("0.5")
-_G[scaleSlider:GetName() .. "High"]:SetText("2.0")
+_G[scaleSlider:GetName() .. "High"]:SetText("2.5")
 _G[scaleSlider:GetName() .. "Text"]:SetText(L.Scale)
 
+-- Manual Text Input Box
+local scaleInput = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+scaleInput:SetSize(40, 20)
+scaleInput:SetPoint("LEFT", scaleSlider, "RIGHT", 15, 0)
+scaleInput:SetAutoFocus(false)
+scaleInput:SetScript("OnEnterPressed", function(self)
+  local val = tonumber(self:GetText())
+  if val then
+    if val < 0.5 then val = 0.5 end
+    if val > 2.5 then val = 2.5 end
+    scaleSlider:SetValue(val)
+  end
+  self:ClearFocus()
+end)
+
 scaleSlider:SetScript("OnValueChanged", function(self, value)
-  value = math.floor(value * 10 + 0.5) / 10
+  value = math.floor(value * 100 + 0.5) / 100 
   ActiveLoadoutsDB.scale = value
+  scaleInput:SetText(tostring(value))
   ApplyLayout()
 end)
 
+-- Reset Scale Button
+local resetScaleBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+resetScaleBtn:SetSize(140, 26)
+resetScaleBtn:SetPoint("LEFT", scaleInput, "RIGHT", 15, 0)
+resetScaleBtn:SetText(L.ResetScale)
+resetScaleBtn:SetScript("OnClick", function()
+  scaleSlider:SetValue(1.0)
+end)
+
+-- Reset Position Button
 local resetBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
 resetBtn:SetSize(180, 26)
 resetBtn:SetPoint("TOPLEFT", scaleSlider, "BOTTOMLEFT", -4, -30)
@@ -328,8 +393,6 @@ resetBtn:SetText(L.ResetPos)
 resetBtn:SetScript("OnClick", function()
   ActiveLoadoutsDB.armorPoint = nil
   ActiveLoadoutsDB.talentPoint = nil
-  armorFrame:ClearAllPoints(); armorFrame:SetPoint("TOPLEFT", UIParent, "CENTER", -85, -180)
-  talentFrame:ClearAllPoints(); talentFrame:SetPoint("TOPLEFT", UIParent, "CENTER", -85, -220)
   ApplyLayout()
   Print(L.ResetMsg)
 end)

@@ -2,7 +2,8 @@
 ## Title: Active Loadouts
 ## Notes: Clean indicators for your currently active Armor and Talents.
 ## Author: Jp
-## Version: 1.0.0
-## SavedVariables: ActiveLoadoutsDB
+## Version: 1.1.0
+## SavedVariablesPerCharacter: ActiveLoadoutsDB
+## IconTexture: Interface\AddOns\ActiveLoadouts\logo.tga
 
 ActiveLoadouts.lua
